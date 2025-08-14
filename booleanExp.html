@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Boolean → NAND / NOR (with Steps)</title>
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        background-color: #f3f4f6;
+        padding: 20px;
+        display: flex;
+        justify-content: center;
+    }
+    .container {
+        background: white;
+        border-radius: 10px;
+        padding: 20px;
+        max-width: 960px;
+        width: 100%;
+        box-shadow: 0 3px 8px rgba(0,0,0,0.15);
+    }
+    h1 {
+        text-align: center;
+        margin-bottom: 20px;
+    }
+    label {
+        font-weight: bold;
+        display: block;
+        margin-bottom: 5px;
+    }
+    input {
+        width: 100%;
+        padding: 8px;
+        border: 1px solid #ccc;
+        border-radius: 6px;
+        font-family: monospace;
+    }
+    .note {
+        font-size: 0.85rem;
+        color: #666;
+        margin-top: 4px;
+        margin-bottom: 15px;
+    }
+    .buttons {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+    button {
+        padding: 8px 12px;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+        font-size: 0.9rem;
+    }
+    .btn-primary {
+        flex: 1;
+        background-color: #2563eb;
+        color: white;
+    }
+    .btn-primary:hover { background-color: #1e40af; }
+    .btn-secondary {
+        background-color: #ddd;
+        color: black;
+    }
+    .btn-secondary:hover { background-color: #ccc; }
+    .grid {
+        display: grid;
+        gap: 15px;
+        grid-template-columns: 1fr 1fr;
+    }
+    section {
+        padding: 10px;
+        border-radius: 8px;
+        background: #f9f9f9;
+    }
+    .nand {
+        border: 1px solid #93c5fd;
+        background: #eff6ff;
+    }
+    .nor {
+        border: 1px solid #6ee7b7;
+        background: #ecfdf5;
+    }
+    pre, .steps {
+        background: white;
+        border: 1px solid #ccc;
+        padding: 8px;
+        font-size: 0.85rem;
+        font-family: monospace;
+        white-space: pre-wrap;
+        border-radius: 5px;
+        overflow-x: auto;
+    }
+    .steps {
+        max-height: 200px;
+        overflow-y: auto;
+    }
+    .notes {
+        font-size: 0.85rem;
+        color: #444;
+        margin-top: 15px;
+    }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>Boolean → NAND / NOR (Step-by-Step)</h1>
+
+<label for="expr">Boolean Expression</label>
+<input id="expr" placeholder="Example: A'C' + B'C or (A + B')C"/>
+<div class="note">Use `'` for NOT, `+` for OR, adjacency/dot for AND. Variables: letters/digits/_</div>
+
+<div class="buttons">
+    <button id="convertBtn" class="btn-primary">Convert &amp; Show Steps</button>
+    <button id="examplesBtn" class="btn-secondary">Insert Example</button>
+</div>
+
+<div class="grid">
+    <section class="nand">
+        <h3>NAND-only</h3>
+        <strong>Final NAND Expression</strong>
+        <pre id="nand-final"></pre>
+        <strong>Steps</strong>
+        <div id="nand-steps" class="steps"></div>
+    </section>
+
+    <section class="nor">
+        <h3>NOR-only</h3>
+        <strong>Final NOR Expression</strong>
+        <pre id="nor-final"></pre>
+        <strong>Steps</strong>
+        <div id="nor-steps" class="steps"></div>
+    </section>
+</div>
+
+<div class="notes">
+<strong>Notes:</strong>
+<ul>
+<li>NOT X = (X NAND X) or (X NOR X)</li>
+<li>A AND B = (A NAND B) NAND (A NAND B) (or with NOR via De Morgan)</li>
+<li>A OR B = (A NAND A) NAND (B NAND B) (or with NOR: (A NOR B) NOR (A NOR B))</li>
+</ul>
+</div>
+</div>
+
+<script>
+// ---------------- TOKENIZER ----------------
+function tokenize(input) {
+    const s = input.replace(/\s+/g, '');
+    const tokens = [];
+    const isVarChar = ch => /[A-Za-z0-9_]/.test(ch);
+
+    for (let i=0; i<s.length; i++) {
+        const ch = s[i];
+        if (isVarChar(ch)) {
+            let j = i+1;
+            while (j < s.length && isVarChar(s[j])) j++;
+            tokens.push({type:'VAR', value: s.slice(i,j)});
+            i = j-1;
+        }
+        else if (ch === '+') tokens.push({type:'OR'});
+        else if (ch === "'") tokens.push({type:'NOT'});
+        else if (ch === '(') tokens.push({type:'LP'});
+        else if (ch === ')') tokens.push({type:'RP'});
+        else if (ch === '.') tokens.push({type:'AND'});
+        else throw new Error(`Unexpected character '${ch}'. Only letters/digits/_, +, ', ., () are allowed.`);
+    }
+    // Insert implicit AND
+    const out = [];
+    for (let i=0; i<tokens.length; i++) {
+        out.push(tokens[i]);
+        if (i+1 < tokens.length) {
+            const a = tokens[i], b = tokens[i+1];
+            if ((a.type === 'VAR' || a.type === 'RP') &&
+                (b.type === 'VAR' || b.type === 'LP')) {
+                out.push({type:'AND'});
+            }
+        }
+    }
+    return out;
+}
+
+// ---------------- PARSER ----------------
+function parse(input) {
+    const tokens = tokenize(input);
+    let i = 0;
+    function peek(){return tokens[i];}
+    function consume(t){if(tokens[i]?.type===t){i++; return true;}return false;}
+    function parseExpr(){let node=parseTerm();while(peek()?.type==='OR'){consume('OR');if(!peek()) errorEnd('+'); node={type:'or',left:node,right:parseTerm()};} return node;}
+    function parseTerm(){let node=parseFactor();while(peek()?.type==='AND'){consume('AND');if(!peek()) errorEnd('AND'); node={type:'and',left:node,right:parseFactor()};} return node;}
+    function parseFactor(){let node=parsePrimary();while(peek()?.type==='NOT'){consume('NOT');node={type:'not', value:node};} return node;}
+    function parsePrimary(){
+        const tk=peek();
+        if(!tk) throw new Error('Unexpected end of input.');
+        if(tk.type==='VAR'){i++; return {type:'var',name:tk.value};}
+        if(tk.type==='LP'){consume('LP'); const node=parseExpr(); if(!consume('RP')) throw new Error('Missing closing parenthesis ")"'); return node;}
+        throw new Error(`Unexpected token ${JSON.stringify(tk)}`);
+    }
+    function errorEnd(op){
+        throw new Error(`Expression cannot end with '${op}'. Missing operand.`);
+    }
+    const tree = parseExpr();
+    if (i < tokens.length) {
+        throw new Error(`Unexpected tokens after expression: '${tokens.slice(i).map(t=>t.value||t.type).join(' ')}'`);
+    }
+    return tree;
+}
+
+// ---------------- UTIL ----------------
+function astToInfix(n) {
+    if(!n) return '';
+    if(n.type==='var') return n.name;
+    if(n.type==='not') return (n.value.type==='var'? astToInfix(n.value): '('+astToInfix(n.value)+')') + "'";
+    if(n.type==='and') return (n.left.type==='or'? '('+astToInfix(n.left)+')': astToInfix(n.left)) + '·' + (n.right.type==='or'? '('+astToInfix(n.right)+')': astToInfix(n.right));
+    if(n.type==='or') return astToInfix(n.left) + ' + ' + astToInfix(n.right);
+    return '';
+}
+
+// ---------------- CONVERSION HELPERS ----------------
+function rawNAND(n){
+    if(n.type==='var') return n.name;
+    if(n.type==='not') return `(${rawNAND(n.value)} NAND ${rawNAND(n.value)})`;
+    if(n.type==='and'){const L=rawNAND(n.left),R=rawNAND(n.right);return `((${L} NAND ${R}) NAND (${L} NAND ${R}))`;}
+    if(n.type==='or'){const L=rawNAND(n.left),R=rawNAND(n.right);return `((${L} NAND ${L}) NAND (${R} NAND ${R}))`;}
+}
+function rawNOR(n){
+    if(n.type==='var') return n.name;
+    if(n.type==='not') return `(${rawNOR(n.value)} NOR ${rawNOR(n.value)})`;
+    if(n.type==='or'){const L=rawNOR(n.left),R=rawNOR(n.right);return `((${L} NOR ${R}) NOR (${L} NOR ${R}))`;}
+    if(n.type==='and'){const L=rawNOR(n.left),R=rawNOR(n.right);return `((${L} NOR ${L}) NOR (${R} NOR ${R}))`;}
+}
+
+// ---------------- CONVERTERS ----------------
+function convertToNAND(node){
+    const steps = [`Start: ${astToInfix(node)}`];
+    function rec(n){
+        if(n.type==='var') return n.name;
+        if(n.type==='not'){const c=rec(n.value),out=`(${c} NAND ${c})`;steps.push(`NOT: ${astToInfix(n.value)} => ${out}`);return out;}
+        if(n.type==='and'){const L=rec(n.left),R=rec(n.right),out=`((${L} NAND ${R}) NAND (${L} NAND ${R}))`;steps.push(`AND: ${astToInfix(n)} => ${out}`);return out;}
+        if(n.type==='or'){steps.push(`De Morgan: ${astToInfix(n)} => (${astToInfix({type:'not',value:n.left})} · ${astToInfix({type:'not',value:n.right})})'`);const out=`(${rawNAND(n.left)} NAND ${rawNAND(n.right)})`.replace(/ /g,'');const leftNot=`(${rawNAND(n.left)} NAND ${rawNAND(n.left)})`, rightNot=`(${rawNAND(n.right)} NAND ${rawNAND(n.right)})`;const orOut=`(${leftNot} NAND ${rightNot})`;steps.push(`NAND identity for OR: ${astToInfix(n)} => ${orOut}`);return orOut;}
+    }
+    const final=rec(node);steps.push(`Final NAND-only expression: ${final}`);return {expr:final,steps};
+}
+function convertToNOR(node){
+    const steps = [`Start: ${astToInfix(node)}`];
+    function rec(n){
+        if(n.type==='var') return n.name;
+        if(n.type==='not'){const c=rec(n.value),out=`(${c} NOR ${c})`;steps.push(`NOT: ${astToInfix(n.value)} => ${out}`);return out;}
+        if(n.type==='or'){const L=rec(n.left),R=rec(n.right),out=`((${L} NOR ${R}) NOR (${L} NOR ${R}))`;steps.push(`OR: ${astToInfix(n)} => ${out}`);return out;}
+        if(n.type==='and'){steps.push(`De Morgan: ${astToInfix(n)} => (${astToInfix({type:'not',value:n.left})} + ${astToInfix({type:'not',value:n.right})})'`);const leftNot=`(${rawNOR(n.left)} NOR ${rawNOR(n.left)})`, rightNot=`(${rawNOR(n.right)} NOR ${rawNOR(n.right)})`;const out=`(${leftNot} NOR ${rightNot})`;steps.push(`NOR identity for AND: ${astToInfix(n)} => ${out}`);return out;}
+    }
+    const final=rec(node);steps.push(`Final NOR-only expression: ${final}`);return {expr:final,steps};
+}
+
+// ---------------- UI ----------------
+document.getElementById('convertBtn').addEventListener('click',()=>{
+    const raw=document.getElementById('expr').value.trim();
+    if(!raw) return alert("Enter an expression first.");
+    try {
+        const ast=parse(raw);
+        const nandRes=convertToNAND(ast);
+        document.getElementById('nand-final').innerText=nandRes.expr;
+        document.getElementById('nand-steps').innerText=nandRes.steps.join('\n');
+        const norRes=convertToNOR(ast);
+        document.getElementById('nor-final').innerText=norRes.expr;
+        document.getElementById('nor-steps').innerText=norRes.steps.join('\n');
+    } catch(e) { alert("Error: " + e.message); }
+});
+
+document.getElementById('examplesBtn').addEventListener('click',()=>{
+    const ex=["A'C' + B'C","(A + B')C + D'","A(B + C') + D'E","((A+B)C')' + F"];
+    document.getElementById('expr').value=ex[Math.floor(Math.random()*ex.length)];
+});
+</script>
+</body>
+</html>
